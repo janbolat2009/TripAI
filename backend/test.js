@@ -1,5 +1,3 @@
-// backend/test.js
-
 require('dotenv').config(); // ✅ ЭТА СТРОКА ОБЯЗАТЕЛЬНА
 
 const axios = require('axios');
