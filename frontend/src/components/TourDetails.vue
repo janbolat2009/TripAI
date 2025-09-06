@@ -1,50 +1,106 @@
 <template>
-  <div class="overlay" @click="$emit('close')">
+  <div class="overlay" @click="router.push({ name: 'Home' })">
     <div class="modal" @click.stop>
-      <button class="close" @click="$emit('close')">&times;</button>
+      <button class="close-btn" @click="router.push({ name: 'Home' })">&times;</button>
 
       <div class="tour-header">
-        <h2>{{ tour.title }}</h2>
-        <p class="tour-location">{{ tour.location }}</p>
+        <h2 class="tour-title">{{ tour.title || 'Тур не найден' }}</h2>
+        <p class="tour-location">{{ tour.location || 'Местоположение неизвестно' }}</p>
+        <p v-if="tour.latitude && tour.longitude" class="tour-coords">
+          Координаты: {{ tour.latitude }}, {{ tour.longitude }}
+        </p>
       </div>
 
-      <div class="tour-details">
-        <p class="tour-description">{{ tour.description }}</p>
-        <p class="tour-price"><strong>Цена тура:</strong> {{ tour.price }}</p>
+      <div class="tour-content">
+        <div class="tour-description">
+          <p>{{ tour.description || 'Описание отсутствует' }}</p>
+          <p class="tour-price"><strong>Цена тура:</strong> {{ tour.price || 'Цена не указана' }}</p>
+        </div>
 
-        <div v-if="hotelsLoading" class="loading-hotels">
+        <button @click="showGuide = true" class="guide-btn">
+        <img src="@/img/chat-icon.png" alt="Chat" class="chat-icon" />
+        </button>
+        <TourGuideChat v-if="showGuide" :tour="tour" :is-open="showGuide" @close="showGuide = false" />
+
+        <!-- Ошибки -->
+        <div v-if="errors.length" class="error-section">
+          <h4>Возникли ошибки:</h4>
+          <p v-for="(error, index) in errors" :key="`error-${index}`" class="error">{{ error }}</p>
+        </div>
+
+        <!-- Рейсы -->
+        <div v-if="flightsLoading && shouldLoadFlights" class="loading-section">
+          <div class="spinner"></div>
+          <p>Загрузка рейсов...</p>
+        </div>
+        <section v-else-if="flights.length && shouldLoadFlights" class="section flights-section">
+          <h3>Доступные рейсы</h3>
+          <div class="grid">
+            <div v-for="(flight, index) in flights" :key="`flight-${index}`" class="card flight-card animate-slide-up">
+              <h4>{{ flight.origin || 'N/A' }} → {{ flight.destination || 'N/A' }}</h4>
+              <p>Дата: {{ formatDate(flight.date) }}</p>
+              <p>Вылет: {{ flight.departure || 'N/A' }}</p>
+              <p>Прибытие: {{ flight.arrival || 'N/A' }}</p>
+              <p>Длительность: {{ flight.duration || 'N/A' }}</p>
+              <p>Цена: {{ flight.price || 'N/A' }}</p>
+              <p v-if="flight.stops">Пересадки: {{ flight.stops }} (через {{ flight.via || 'N/A' }})</p>
+              <a :href="flight.link || '#'" target="_blank" class="book-btn">Забронировать</a>
+            </div>
+          </div>
+        </section>
+        <p v-else-if="shouldLoadFlights" class="no-data">Рейсы не найдены</p>
+
+        <!-- Отели -->
+        <div v-if="hotelsLoading" class="loading-section">
           <div class="spinner"></div>
           <p>Загрузка отелей...</p>
         </div>
-        <div v-else-if="hotelsError" class="error-hotels">
-          {{ hotelsError }}
-        </div>
-        <div v-else-if="hotels.length" class="hotels-section">
+        <section v-else-if="hotels.length" class="section hotels-section">
           <h3>Рекомендуемые отели</h3>
-          <div class="hotels-grid">
-            <div v-for="hotel in hotels" :key="hotel.name" class="hotel-card">
-              <img :src="hotel.photo" alt="Отель" class="hotel-photo" />
-              <div class="hotel-info">
-                <h4>{{ hotel.name }}</h4>
-                <p>Цена: {{ hotel.price }} USD</p>
-                <p>Рейтинг: {{ hotel.rating }}/10</p>
-                <a :href="hotel.link" target="_blank" class="book-btn">Забронировать</a>
+          <div class="grid">
+            <div v-for="hotel in hotels" :key="hotel.hotel_id || hotel.name" class="card hotel-card animate-slide-up">
+              <img :src="hotel.photo || placeholderImage" :alt="hotel.name" class="card-image" @error="onImageError" />
+              <div class="card-content">
+                <h4>{{ hotel.name || 'Название отеля' }}</h4>
+                <p>Цена: {{ hotel.price || 'Не указана' }}</p>
+                <p>Рейтинг: ⭐ {{ hotel.rating || 'N/A' }}</p>
+                <p>Адрес: {{ hotel.address || 'Не указан' }}</p>
+                <p>Телефон: {{ hotel.phone || 'Не указан' }}</p>
+                <a :href="hotel.link || '#'" target="_blank" class="book-btn">Забронировать</a>
+                <p v-if="hotel.photoAuthor" class="photo-credit">Фото: {{ hotel.photoAuthor }} на Unsplash</p>
               </div>
             </div>
           </div>
+        </section>
+        <p v-else class="no-data">Отели не найдены</p>
+
+        <!-- Такси -->
+        <div v-if="taxiLoading" class="loading-section">
+          <div class="spinner"></div>
+          <p>Загрузка такси...</p>
         </div>
-        <p v-else class="no-hotels">Отели не найдены</p>
-      </div>
+        <section v-else-if="taxiOptions.length" class="section taxi-section">
+          <h3>Доступные услуги такси {{ shouldLoadFlights ? 'от аэропорта до отеля' : '' }}</h3>
+          <div class="grid">
+            <div v-for="taxi in taxiOptions" :key="taxi.id" class="card taxi-card animate-slide-up">
+              <h4>{{ taxi.company || 'N/A' }}</h4>
+              <p>Цена (примерно): {{ taxi.price || 'N/A' }}</p>
+              <p>Время подачи: {{ taxi.eta || 'N/A' }}</p>
+              <a :href="taxi.link || '#'" target="_blank" class="book-btn">Заказать</a>
+            </div>
+          </div>
+        </section>
+        <p v-else class="no-data">Услуги такси не найдены</p>
 
-      <div v-if="mapLoaded" id="map" class="map"></div>
-      <p v-else class="loading-map">Загрузка карты...</p>
-
-      <div v-if="tour.flights && tour.flights.length" class="flights">
-        <h3>Рекомендуемые перелёты</h3>
-        <div v-for="flight in tour.flights" :key="flight.id" class="flight">
-          <p>Цена: {{ flight.price }} USD</p>
-          <p>Дата вылета: {{ flight.departure_at }}</p>
-          <p>Авиакомпания: {{ flight.airline }}</p>
+        <!-- Карта -->
+        <div v-if="tour.latitude && tour.longitude" class="map-section animate-fade-in">
+          <h3>Карта местоположения</h3>
+          <div id="map" class="map"></div>
+        </div>
+        <p v-if="mapError" class="no-data">{{ mapError }}</p>
+        <div v-if="!mapLoaded && !mapError && tour.latitude && tour.longitude" class="loading-section">
+          <div class="spinner"></div>
+          <p>Загрузка карты...</p>
         </div>
       </div>
     </div>
@@ -52,340 +108,522 @@
 </template>
 
 <script>
+import { ref, computed, onMounted, nextTick } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import axios from 'axios';
+import axiosRetry from 'axios-retry';
+import placeholderImage from '../img/placeholder.jpg';
+import TourGuideChat from './TourGuideChat.vue';
+
+axiosRetry(axios, { retries: 2, retryDelay: (retryCount) => retryCount * 1000 });
 
 export default {
-  props: { tour: { type: Object, required: true } },
-  data() {
-    return {
-      mapLoaded: false,
-      hotels: [],
-      hotelsLoading: false,
-      hotelsError: null,
+  name: 'TourDetails',
+  components: { TourGuideChat },
+  props: {
+    userCity: { type: String, default: 'Астана' },
+    tour: { type: Object, default: () => ({}) },
+    needsFlight: { type: Boolean, default: false }, // Добавлен пропс для динамического управления рейсами
+  },
+  setup(props) {
+    const flights = ref([]);
+    const flightsLoading = ref(false);
+    const hotels = ref([]);
+    const hotelsLoading = ref(false);
+    const taxiOptions = ref([]);
+    const taxiLoading = ref(false);
+    const mapLoaded = ref(false);
+    const mapError = ref(null);
+    const errors = ref([]);
+    const showGuide = ref(false); // Управление отображением тургида
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+
+    const route = useRoute();
+    const router = useRouter();
+
+    const shouldLoadFlights = computed(() => true); 
+
+    const formatDate = (dateString) => {
+      try {
+        return new Date(dateString).toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' });
+      } catch (error) {
+        return dateString || 'N/A';
+      }
     };
-  },
-  async mounted() {
-    await this.loadYandexMaps();
-    this.initMap();
-    await this.loadHotels();
-  },
-  methods: {
-    async loadYandexMaps() {
-      return new Promise((resolve) => {
-        if (window.ymaps) {
-          window.ymaps.ready(resolve);
-          return;
-        }
+
+    const onImageError = (event) => {
+      event.target.src = placeholderImage;
+    };
+
+    const loadMap = async () => {
+      if (!props.tour.latitude || !props.tour.longitude) {
+        mapError.value = 'Координаты тура отсутствуют';
+        errors.value.push(mapError.value);
+        return;
+      }
+      if (!import.meta.env.VITE_YANDEX_MAPS_API_KEY) {
+        mapError.value = 'Ошибка: VITE_YANDEX_MAPS_API_KEY не настроен';
+        errors.value.push(mapError.value);
+        return;
+      }
+      try {
+        await loadYandexMaps();
+        await nextTick();
+        const mapContainer = document.getElementById('map');
+        if (!mapContainer) throw new Error('Контейнер карты не найден');
+        window.ymaps.ready(() => {
+          const map = new window.ymaps.Map('map', {
+            center: [props.tour.latitude, props.tour.longitude],
+            zoom: 12,
+            controls: ['zoomControl', 'fullscreenControl'],
+          });
+          const placemark = new window.ymaps.Placemark(
+            [props.tour.latitude, props.tour.longitude],
+            { balloonContent: props.tour.title || 'Тур' }
+          );
+          map.geoObjects.add(placemark);
+          mapLoaded.value = true;
+        });
+      } catch (error) {
+        mapError.value = 'Ошибка загрузки карты: ' + error.message;
+        errors.value.push(mapError.value);
+      }
+    };
+
+    const loadYandexMaps = () => {
+      return new Promise((resolve, reject) => {
+        if (window.ymaps) return resolve();
         const script = document.createElement('script');
-        script.src = `https://api-maps.yandex.ru/2.1/?apikey=${import.meta.env.VITE_YANDEX_API_KEY}&lang=ru_RU`;
+        script.src = `https://api-maps.yandex.ru/2.1/?apikey=${import.meta.env.VITE_YANDEX_MAPS_API_KEY}&lang=ru_RU`;
+        script.async = true;
         script.onload = () => window.ymaps.ready(resolve);
+        script.onerror = () => reject(new Error('Не удалось загрузить Yandex Maps API'));
         document.head.appendChild(script);
       });
-    },
-    initMap() {
-      const city = this.tour.location.split(',')[0].trim();
-      window.ymaps.geocode(city, { results: 1 }).then(res => {
-        const coords = res.geoObjects.get(0).geometry.getCoordinates();
-        new window.ymaps.Map('map', { center: coords, zoom: 12 });
-        this.mapLoaded = true;
-      }).catch(() => {
-        this.mapLoaded = false;
-      });
-    },
-    async loadHotels() {
-      this.hotelsLoading = true;
-      this.hotelsError = null;
+    };
+
+    
+    const loadHotels = async () => {
+  hotelsLoading.value = true;
+  try {
+    const { latitude, longitude } = props.tour;
+    if (!latitude || !longitude) {
+      console.warn('[TourDetails] Координаты тура отсутствуют, используем координаты из location:', props.tour.location);
+      const destCity = props.tour.location?.split(',')[0].trim() || 'Боровое';
+      const coords = cityCoordinates[destCity] || cityCoordinates['Алматы']; // По умолчанию Алматы
+      latitude = coords.lat;
+      longitude = coords.lng;
+    }
+    console.log('[TourDetails] Запрос отелей для координат:', { latitude, longitude });
+    const response = await axios.post(`${apiUrl}/api/hotels`, {
+      textQuery: `hotels near ${latitude},${longitude}`,
+      latitude,
+      longitude,
+    }, { timeout: 15000 });
+    console.log('[TourDetails] Ответ от /api/hotels:', response.data);
+    hotels.value = Array.isArray(response.data) ? response.data : [];
+  } catch (error) {
+    console.error('[TourDetails] Ошибка загрузки отелей:', error.message);
+    errors.value.push(`Ошибка загрузки отелей: ${error.message}`);
+  } finally {
+    hotelsLoading.value = false;
+  }
+  };
+
+   const cityToAirportCode = {
+  'Боровое': 'KOV', // Исправлено на аэропорт Кокшетау
+  'Алматы': 'ALA',
+  'Астана': 'NQZ',
+  'Шымкент': 'CIT',
+  'Караганда': 'KGF',
+  'Актобе': 'AKX',
+  'Кокшетау': 'KOV',
+  'Тараз': 'CIT',
+  'Павлодар': 'PWQ',
+  'Усть-Каменогорск': 'UKK',
+  'Семей': 'PLX',
+  'Атырау': 'GUW',
+};
+
+const loadFlights = async () => {
+  if (!shouldLoadFlights.value) {
+    console.log('[TourDetails] Flights not loaded: shouldLoadFlights is false');
+    return;
+  }
+  flightsLoading.value = true;
+  try {
+    const userCity = props.userCity || 'Астана';
+    const destinationCity = props.tour.location?.split(',')[0].trim() || 'Боровое';
+    console.log('[TourDetails] Loading flights for:', { userCity, destinationCity });
+
+    const origin = cityToAirportCode[userCity] || 'NQZ';
+    const destination = cityToAirportCode[destinationCity] || (destinationCity === 'Боровое' ? 'KOV' : 'ALA');
+
+    console.log('[TourDetails] Flight route:', { origin, destination });
+    if (origin === destination) {
+      flights.value = [];
+      console.log('[TourDetails] Origin and destination are the same, no flights needed');
+      return;
+    }
+
+    const today = new Date();
+    const departureDate = today.toISOString().split('T')[0]; // 2025-09-03
+    const returnDate = new Date(today.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const prompt = `Хочу в ${destinationCity} на 3 дня`; // Добавляем prompt
+
+    const response = await axios.post(`${apiUrl}/api/flights/init`, {
+      prompt,
+      origin,
+      destination,
+      departure_at: departureDate,
+      return_at: returnDate,
+      userCity: props.userCity,
+    }, { timeout: 30000 });
+
+    console.log('[TourDetails] Flight response:', response.data);
+    flights.value = Array.isArray(response.data.flights) ? response.data.flights : [];
+    if (flights.value.length === 0) {
+      errors.value.push('Нет доступных рейсов для выбранных дат.');
+    }
+  } catch (error) {
+    console.error('[TourDetails] Error loading flights:', error.message, error.response?.data);
+    errors.value.push(`Ошибка загрузки рейсов: ${error.message}`);
+    flights.value = [];
+  } finally {
+    flightsLoading.value = false;
+  }
+};
+
+    const loadTaxi = async () => {
+      taxiLoading.value = true;
       try {
-        console.log(`[TourDetails.vue] Запрос отелей для ${this.tour.location}`);
-        const response = await axios.get('http://localhost:5001/api/hotels', {
-          params: { city: this.tour.location.split(',')[0].trim() },
+        const from = shouldLoadFlights.value ? `${props.tour.location?.split(',')[0].trim() || 'Боровое'} Airport` : props.userCity || 'Астана';
+        const to = props.tour.location?.split(',')[0].trim() || 'Боровое';
+        const response = await axios.get(`${apiUrl}/api/taxi`, {
+          params: { from, to, needsFlight: shouldLoadFlights.value },
+          timeout: 15000,
         });
-        this.hotels = response.data || [];
-        if (!this.hotels.length) {
-          this.hotelsError = `Отели для ${this.tour.location} не найдены`;
-        }
-        console.log(`[TourDetails.vue] Отели получены:`, this.hotels);
+        taxiOptions.value = Array.isArray(response.data) ? response.data : [];
       } catch (error) {
-        console.error('[TourDetails.vue] Ошибка загрузки отелей:', error.response?.data || error.message);
-        this.hotelsError = error.response?.data?.error || `Ошибка загрузки отелей для ${this.tour.location}`;
-        this.hotels = [];
+        errors.value.push(`Ошибка загрузки такси: ${error.message}`);
       } finally {
-        this.hotelsLoading = false;
+        taxiLoading.value = false;
       }
-    },
+    };
+
+    onMounted(async () => {
+      console.log('[TourDetails] Полученный тур:', props.tour);
+      console.log('[TourDetails] Location:', props.tour.location);
+      console.log('[TourDetails] Координаты:', props.tour.latitude, props.tour.longitude);
+
+      if (!apiUrl) {
+        errors.value.push('Ошибка: VITE_API_URL не настроен');
+        return;
+      }
+      await Promise.allSettled([loadMap(), loadHotels(), loadTaxi(), loadFlights()]);
+    });
+
+    return {
+      flights,
+      flightsLoading,
+      hotels,
+      hotelsLoading,
+      taxiOptions,
+      taxiLoading,
+      mapLoaded,
+      mapError,
+      errors,
+      showGuide,
+      placeholderImage,
+      shouldLoadFlights,
+      formatDate,
+      onImageError,
+      router,
+    };
   },
 };
 </script>
 
+
 <style scoped>
-/* Стили без изменений */
+/* TourDetails.css */
+* {
+  font-family: 'Segoe UI', 'Roboto', sans-serif;
+  box-sizing: border-box;
+}
+
 .overlay {
   position: fixed;
   top: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.9);
-  backdrop-filter: blur(15px);
+  width: 100vw;
+  height: 100vh;
+  background: linear-gradient(135deg, rgba(0, 0, 0, 0.8), rgba(15, 30, 25, 0.9)),
+              url('/img/background-blur.jpg') no-repeat center center;
+  background-size: cover;
   display: flex;
   justify-content: center;
   align-items: center;
   z-index: 3000;
-  animation: fadeIn 0.8s ease-out;
+  padding: 20px;
+  overflow-x: hidden;
+  animation: fadeIn 0.6s ease-out;
 }
 
 .modal {
-  background: linear-gradient(145deg, rgba(45, 84, 77, 0.95), rgba(30, 61, 54, 0.95));
-  backdrop-filter: blur(12px);
-  width: 90%;
-  max-width: 1000px;
-  border-radius: 30px;
-  padding: 50px;
-  box-shadow: 0 25px 70px rgba(0, 0, 0, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  animation: epicZoom 0.8s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-  max-height: 90vh;
+  background: linear-gradient(145deg, #1e3a32, #122620);
+  width: 100%;
+  max-width: 900px;
+  border-radius: 20px;
+  padding: 32px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(67, 181, 129, 0.3);
+  color: #e0f7f0;
   overflow-y: auto;
-  color: #d1e8e2;
-  clip-path: polygon(0 10%, 100% 0, 100% 90%, 0 100%);
+  max-height: 90vh;
+  backdrop-filter: blur(10px);
 }
 
-.close {
+.close-btn {
   position: absolute;
-  top: 25px;
-  right: 25px;
-  font-size: 3rem;
-  color: #d1e8e2;
-  background: none;
-  border: none;
+  top: 15px;
+  right: 15px;
+  font-size: 2rem;
+  color: #a8d8c9;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(67, 181, 129, 0.3);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
   cursor: pointer;
-  transition: transform 0.4s ease, color 0.3s ease;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.close:hover {
+.close-btn:hover {
   color: #43b581;
-  transform: rotate(360deg) scale(1.3);
+  background: rgba(67, 181, 129, 0.2);
+  transform: scale(1.15);
+  box-shadow: 0 0 10px rgba(67, 181, 129, 0.4);
 }
 
 .tour-header {
   text-align: center;
-  margin-bottom: 40px;
-  animation: slideIn 0.6s ease-out 0.2s both;
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(67, 181, 129, 0.2);
 }
 
-.tour-header h2 {
-  font-size: 2.8rem;
-  font-weight: 700;
-  color: #d1e8e2;
-  text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.5);
-  margin: 0;
+.tour-title {
+  font-size: 2.5rem;
+  font-weight: 800;
+  margin: 0 0 10px;
+  color: #ffffff;
+  text-shadow: 1px 1px 8px rgba(0, 0, 0, 0.5);
+  letter-spacing: -0.5px;
 }
 
 .tour-location {
-  font-size: 1.4rem;
-  color: #b0c4b1;
-  margin: 15px 0 0;
+  font-size: 1.2rem;
+  color: #a8d8c9;
+  margin: 5px 0;
 }
 
-.tour-details {
-  margin: 40px 0;
-  animation: slideIn 0.6s ease-out 0.3s both;
+.tour-coords {
+  font-size: 1rem;
+  color: #88c0b0;
+  margin: 5px 0;
+  font-style: italic;
 }
 
 .tour-description {
-  font-size: 1.3rem;
-  line-height: 1.8;
-  color: #b0c4b1;
-  margin-bottom: 20px;
+  padding: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  margin-bottom: 30px;
+  backdrop-filter: blur(8px);
+}
+
+.tour-description p {
+  font-size: 1.1rem;
+  color: #c5e8dd;
+  line-height: 1.7;
+  margin: 0;
 }
 
 .tour-price {
-  font-size: 1.5rem;
-  color: #43b581;
-  font-weight: 600;
-  margin-bottom: 30px;
-}
-
-.hotels-section {
-  margin-top: 30px;
-}
-
-.hotels-section h3 {
-  font-size: 2rem;
-  color: #d1e8e2;
+  margin-top: 20px;
+  font-size: 1.4rem;
+  color: #43d9a2;
+  font-weight: 700;
   text-align: center;
-  margin-bottom: 30px;
-  text-shadow: 1px 1px 5px rgba(0, 0, 0, 0.3);
+  padding: 12px;
+  background: rgba(67, 217, 162, 0.15);
+  border-radius: 12px;
+  margin-top: 15px;
+  border: 1px solid rgba(67, 217, 162, 0.3);
 }
 
-.hotels-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 25px;
-}
-
-.hotel-card {
-  background: linear-gradient(135deg, rgba(30, 61, 54, 0.9), rgba(26, 50, 45, 0.9));
-  border-radius: 20px;
-  overflow: hidden;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
-  transition: transform 0.4s ease, box-shadow 0.4s ease;
-  animation: slideIn 0.6s ease-out 0.4s both;
-}
-
-.hotel-card:hover {
-  transform: translateY(-10px);
-  box-shadow: 0 12px 30px rgba(67, 181, 129, 0.5);
-}
-
-.hotel-photo {
-  width: 100%;
-  height: 200px;
-  object-fit: cover;
-}
-
-.hotel-info {
-  padding: 20px;
+.guide-btn {
+  padding: 10px;
+  background: linear-gradient(90deg, #43b581, #2e8b57);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-top: 20px;
+  transition: background 0.3s ease;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  width: 50px;
+  height: 50px;
 }
 
-.hotel-info h4 {
-  font-size: 1.5rem;
-  color: #d1e8e2;
-  margin: 0;
+.guide-btn:hover {
+  background: #43b581;
 }
 
-.hotel-info p {
-  font-size: 1.2rem;
-  color: #b0c4b1;
-  margin: 0;
+.chat-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.guide-btn .fas {
+  font-size: 1.5rem; /* Размер иконки */
+}
+
+.section h3 {
+  font-size: 1.9rem;
+  color: #e0f7f0;
+  text-align: center;
+  margin-bottom: 20px;
+  font-weight: 600;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+  transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), box-shadow 0.4s ease;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.card:hover {
+  transform: translateY(-8px) scale(1.02);
+  box-shadow: 0 15px 35px rgba(67, 181, 129, 0.35);
+}
+
+.card-image {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  border: 2px solid rgba(67, 181, 129, 0.2);
+}
+
+.card-content h4 {
+  font-size: 1.3rem;
+  color: #ffffff;
+  margin: 0 0 10px;
+  font-weight: 600;
+}
+
+.card-content p {
+  font-size: 0.95rem;
+  color: #c5e8dd;
+  margin: 5px 0;
+}
+
+.photo-credit {
+  font-size: 0.8rem;
+  color: #a8d8c9;
+  margin: 8px 0 0;
+  font-style: italic;
 }
 
 .book-btn {
   display: inline-block;
-  padding: 12px 25px;
-  background: linear-gradient(90deg, #43b581, #2e8b57);
+  margin-top: 12px;
+  padding: 10px 18px;
+  background: linear-gradient(90deg, #43d9a2, #3cb081);
   color: #fff;
   text-decoration: none;
-  border-radius: 12px;
-  font-size: 1.1rem;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
   text-align: center;
-  transition: background 0.3s ease, transform 0.3s ease;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 10px rgba(67, 217, 162, 0.3);
 }
 
 .book-btn:hover {
-  background: linear-gradient(90deg, #3fa372, #2a7b4b);
-  transform: translateY(-3px);
+  background: #43b581;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 15px rgba(67, 181, 129, 0.4);
 }
 
-.loading-hotels {
+.loading-section,
+.error-section,
+.no-data {
   text-align: center;
-  color: #b0c4b1;
-  margin: 30px 0;
+  padding: 20px;
+  border-radius: 12px;
+  margin: 20px 0;
 }
 
-.loading-hotels .spinner {
+.loading-section {
+  background: rgba(20, 40, 35, 0.7);
+  color: #a8d8c9;
+}
+
+.loading-section .spinner {
   width: 40px;
   height: 40px;
-  border: 4px solid #43b581;
+  border: 4px solid #43d9a2;
   border-top: 4px solid transparent;
   border-radius: 50%;
   animation: spin 1s linear infinite;
-  margin: 0 auto 15px;
+  margin: 0 auto 12px;
 }
 
-.error-hotels {
-  text-align: center;
+.error-section,
+.no-data {
+  background: rgba(80, 30, 30, 0.7);
   color: #e57373;
-  background: rgba(58, 34, 34, 0.8);
-  padding: 15px;
-  border-radius: 12px;
-  margin: 30px 0;
-  border: 1px solid rgba(94, 48, 48, 0.5);
-  font-size: 1.2rem;
+  border: 1px solid rgba(229, 115, 115, 0.3);
 }
 
-.no-hotels {
-  text-align: center;
-  color: #e57373;
-  font-size: 1.2rem;
-  margin: 30px 0;
+.map-section {
+  margin-top: 30px;
 }
 
 .map {
   width: 100%;
-  height: 450px;
-  border-radius: 20px;
-  margin: 40px 0;
-  background: #1e3d36;
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5);
-  animation: slideIn 0.6s ease-out 0.5s both;
-}
-
-.loading-map {
-  text-align: center;
-  color: #b0c4b1;
-  font-size: 1.2rem;
-  margin: 40px 0;
-}
-
-.flights {
-  margin-top: 40px;
-  animation: slideIn 0.6s ease-out 0.6s both;
-}
-
-.flights h3 {
-  font-size: 2rem;
-  color: #d1e8e2;
-  text-align: center;
-  margin-bottom: 30px;
-  text-shadow: 1px 1px 5px rgba(0, 0, 0, 0.3);
-}
-
-.flight {
-  background: linear-gradient(135deg, rgba(30, 61, 54, 0.9), rgba(26, 50, 45, 0.9));
-  padding: 25px;
-  border-radius: 15px;
-  margin-bottom: 20px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-}
-
-.flight p {
-  font-size: 1.2rem;
-  color: #b0c4b1;
-  margin: 10px 0;
+  height: 350px;
+  border-radius: 14px;
+  background: rgba(20, 40, 35, 0.8);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(67, 181, 129, 0.2);
 }
 
 /* Анимации */
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes epicZoom {
-  from {
-    opacity: 0;
-    transform: scale(0.6) rotate(-10deg);
-    clip-path: polygon(0 10%, 100% 0, 100% 90%, 0 100%);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) rotate(0deg);
-    clip-path: polygon(0 10%, 100% 0, 100% 90%, 0 100%);
-  }
-}
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateY(30px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes spin {
@@ -393,46 +631,37 @@ export default {
   100% { transform: rotate(360deg); }
 }
 
-@media (max-width: 600px) {
-  .modal {
-    padding: 30px;
-    border-radius: 20px;
-  }
+.animate-slide-up {
+  animation: slideUp 0.5s ease-out forwards;
+  opacity: 0;
+}
 
-  .tour-header h2 {
-    font-size: 2.2rem;
+@keyframes slideUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
+}
 
-  .tour-location {
-    font-size: 1.2rem;
-  }
+.animate-fade-in {
+  animation: fadeIn 0.8s ease-out;
+}
 
-  .tour-description {
-    font-size: 1.1rem;
-  }
+/* Адаптив */
+@media (max-width: 768px) {
+  .modal { padding: 20px; max-width: 95%; }
+  .tour-title { font-size: 2rem; }
+  .grid { gap: 16px; }
+  .card-image { height: 140px; }
+  .map { height: 280px; }
+}
 
-  .tour-price {
-    font-size: 1.3rem;
-  }
-
-  .hotels-section h3, .flights h3 {
-    font-size: 1.6rem;
-  }
-
-  .hotels-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .hotel-photo {
-    height: 250px;
-  }
-
-  .hotel-info {
-    padding: 15px;
-  }
-
-  .map {
-    height: 350px;
-  }
+@media (max-width: 480px) {
+  .modal { padding: 15px; }
+  .close-btn { top: 10px; right: 10px; width: 35px; height: 35px; font-size: 1.6rem; }
+  .tour-title { font-size: 1.7rem; }
+  .card-image { height: 120px; }
+  .map { height: 220px; }
+  .tour-price { font-size: 1.2rem; }
 }
 </style>

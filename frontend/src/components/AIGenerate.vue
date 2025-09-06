@@ -5,77 +5,156 @@
 
       <h3 class="modal-title">Создайте идеальный тур с ИИ</h3>
 
-      <textarea v-model="preferences" placeholder="Например: тур в Турцию, 7 дней, бюджет до 1000 евро..." class="preferences-input" rows="5"></textarea>
+      <textarea 
+        v-model="prompt" 
+        placeholder="Например: тур в Боровое на 3 дня, 3 человек..." 
+        class="preferences-input" 
+        rows="5"
+      ></textarea>
 
-      <button @click="submit" :disabled="loading" class="generate-btn">
-        <span v-if="loading">Генерация...</span>
+      <button @click="submit" :disabled="internalLoading" class="generate-btn">
+        <span v-if="internalLoading">Генерация...</span>
         <span v-else>Сгенерировать тур</span>
       </button>
 
-      <div v-if="loading" class="loading">
+      <div v-if="internalLoading" class="loading">
         <div class="spinner"></div>
         <p>ИИ подбирает лучшие туры...</p>
       </div>
 
-      <div v-if="error" class="error-message">
-        {{ error }}
+      <div v-if="internalError" class="error-message">
+        {{ internalError }}
       </div>
 
-      <div v-else-if="tours.length" class="tours-grid">
+      <div v-else-if="internalTours.length" class="tours-grid">
         <div
-          v-for="tour in tours"
-          :key="tour.title"
+          v-for="(tour, index) in internalTours"
+          :key="`${tour.title}-${index}`"
           class="tour-card"
           @click="showDetails(tour)"
         >
-          <h4>{{ tour.title }}</h4>
-          <p class="tour-description">{{ tour.description }}</p>
+          <h4>{{ tour.title || 'Тур не указан' }}</h4>
+          <p class="tour-description">{{ tour.description || 'Описание отсутствует' }}</p>
           <div class="tour-footer">
-            <p class="tour-price">{{ tour.price }}</p>
-            <p class="tour-location">{{ tour.location }}</p>
+            <p class="tour-price">{{ tour.price || 'Цена не указана' }}</p>
+            <p class="tour-location">{{ tour.location || 'Местоположение не указано' }}</p>
           </div>
-          <p v-if="tour.error" class="tour-error">{{ tour.error }}</p>
+          <p v-if="tour.latitude && tour.longitude" class="tour-coords">
+            Координаты: {{ tour.latitude }}, {{ tour.longitude }}
+          </p>
         </div>
       </div>
-
-      <TourDetails
-        v-if="selectedTour"
-        :tour="selectedTour"
-        @close="selectedTour = null"
-      />
     </div>
   </div>
 </template>
 
 <script>
-import TourDetails from './TourDetails.vue';
+import axios from 'axios';
+import axiosRetry from 'axios-retry';
+
+// Настройка повторных попыток
+axiosRetry(axios, {
+  retries: 3,
+  retryDelay: (retryCount) => retryCount * 1000,
+  retryCondition: (error) => error.code === 'ECONNABORTED' || error.response?.status >= 500,
+});
 
 export default {
-  components: {
-    TourDetails,
-  },
-  props: {
-    tours: { type: Array, default: () => [] },
-    error: { type: String, default: null },
-    loading: { type: Boolean, default: false },
-  },
+  name: 'AIGenerate',
   emits: ['close', 'generate'],
   data() {
     return {
-      preferences: '',
+      prompt: '',
       selectedTour: null,
+      internalTours: [],
+      internalError: null,
+      internalLoading: false,
     };
   },
   methods: {
-    submit() {
-      this.$emit('generate', this.preferences || 'тур на 7 дней, бюджет до 1000 евро, с посещением Алматы и природных достопримечательностей');
-    },
+    async submit() {
+  if (!this.prompt.trim()) {
+    this.internalError = 'Пожалуйста, введите описание тура';
+    console.warn('[AIGenerate.vue] Ошибка: Пустой prompt');
+    return;
+  }
+
+  this.internalLoading = true;
+  this.internalError = null;
+  this.internalTours = [];
+
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+  console.log('[AIGenerate.vue] Используемый URL:', `${apiUrl}/api/ai`);
+
+  try {
+    const requestPrompt = this.prompt.trim();
+    console.log('[AIGenerate.vue] Отправка запроса с prompt:', requestPrompt);
+
+    const response = await axios.post(
+      `${apiUrl}/api/ai`,
+      { prompt: requestPrompt, userCity: this.$parent.userCity || 'Астана' }, // Use parent App.vue userCity
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 30000,
+      }
+    );
+
+    console.log('[AIGenerate.vue] Получен ответ:', response.data);
+
+    if (response.data && response.data.tours) {
+      const tours = Array.isArray(response.data.tours) ? response.data.tours : [response.data.tours];
+      this.internalTours = tours
+        .map((tour) => ({
+          title: tour.title || 'Тур без названия',
+          description: tour.description || 'Описание отсутствует',
+          price: tour.price || 'Цена не указана',
+          location: tour.location || 'Местоположение не указано',
+          latitude: typeof tour.latitude === 'number' ? tour.latitude : null,
+          longitude: typeof tour.longitude === 'number' ? tour.longitude : null,
+        }))
+        .filter((tour) => tour.title !== 'Тур без названия');
+
+      if (this.internalTours.length === 0) {
+        this.internalError = 'Не удалось сгенерировать туры. Попробуйте изменить запрос.';
+        console.warn('[AIGenerate.vue] Ошибка: Нет валидных туров');
+      } else {
+        console.log('[AIGenerate.vue] Туры успешно обработаны:', this.internalTours);
+        this.$emit('generate', this.internalTours);
+      }
+    } else {
+      this.internalError = 'Некорректный ответ от сервера';
+      console.error('[AIGenerate.vue] Ошибка: Ответ не содержит tours', response.data);
+    }
+  } catch (error) {
+    console.error('[AIGenerate.vue] Ошибка генерации туров:', error);
+    let errorMessage = 'Не удалось сгенерировать туры. Попробуйте позже.';
+    if (error.code === 'ECONNABORTED') {
+      errorMessage = 'Превышено время ожидания. Проверьте подключение к серверу.';
+    } else if (error.response) {
+      errorMessage = error.response.data?.error || error.message;
+      const errorDetails = error.response.data?.details || '';
+      errorMessage += errorDetails ? `. ${errorDetails}` : '';
+    }
+    this.internalError = errorMessage;
+  } finally {
+    this.internalLoading = false;
+  }
+},
     showDetails(tour) {
-      this.selectedTour = tour;
+  console.log('[AIGenerate.vue] Показ деталей тура:', tour);
+  this.$emit('close');
+  this.$router.push({
+    name: 'TourDetails',
+    query: {
+      tour: JSON.stringify(tour),
+      userCity: 'Астана', 
     },
+  });
+},
   },
 };
 </script>
+
 
 <style scoped>
 .modal-overlay {
@@ -95,7 +174,6 @@ export default {
 
 .modal {
   background: linear-gradient(145deg, rgba(45, 84, 77, 0.95), rgba(30, 61, 54, 0.95));
-  backdrop-filter: blur(10px);
   width: 90%;
   max-width: 800px;
   border-radius: 25px;
@@ -179,7 +257,6 @@ export default {
 .generate-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
-  transform: none;
 }
 
 .loading {
@@ -272,31 +349,31 @@ export default {
   margin: 0;
 }
 
+.tour-coords {
+  font-size: 1rem;
+  color: #b0c4b1;
+  margin: 0;
+}
+
 .tour-error {
   font-size: 1rem;
   color: #e57373;
   background: rgba(58, 34, 34, 0.8);
+  border: 1px solid #e57373;
+  border-radius: 10px;
   padding: 10px;
-  border-radius: 8px;
   margin-top: 10px;
   text-align: center;
 }
 
-/* Анимации */
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
 @keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(50px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(50px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes spin {
