@@ -508,6 +508,11 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Внутренняя ошибка сервера', details: err.message });
 });
 
+app.get('/api/hello', (req, res) => {
+  res.json({ message: "Hello from the Node.js backend!" });
+});
+
+/*
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {
   console.log(`✅ Сервер запущен на http://localhost:${PORT}`);
@@ -520,3 +525,5 @@ app.listen(PORT, () => {
   console.log('  POST /api/register - Регистрация');
   console.log('  POST /api/login - Вход');
 });
+*/
+export default app;
